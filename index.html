@@ -25,6 +25,8 @@
 	@keyframes s { to { transform: rotate(360deg); } }
 	button { margin-top: 18px; padding: 10px 18px; border: 0; border-radius: 12px; font: inherit; font-weight: 600;
 		background: linear-gradient(90deg, #f5b14c, #e2683c); color: #0b0f17; cursor: pointer; }
+	button:disabled { opacity: .6; cursor: wait; }
+	#auto { margin-top: 10px; font-size: .85rem; }
 	small { display: block; margin-top: 16px; color: var(--muted); font-size: .75rem; }
 	[hidden] { display: none; }
 </style>
@@ -39,30 +41,67 @@
 	</section>
 	<section id="closed" hidden>
 		<h1>Le site est fermé pour le moment</h1>
-		<p>L'ordi qui fait tourner le site est éteint. Réessaie un peu plus tard.</p>
-		<button type="button" onclick="location.reload()">Réessayer</button>
+		<p>L'ordi qui fait tourner le site est éteint, ou il vient de redémarrer.</p>
+		<p id="auto">Cette page réessaie toute seule : elle t'enverra sur le site dès qu'il sera ouvert.</p>
+		<button type="button" id="retry">Réessayer maintenant</button>
 	</section>
-	<small>Lien mis à jour le 4 novembre 2026 à 19 h 55</small>
+	<small>Lien mis à jour le 4 novembre 2026 à 19 h 56</small>
 </main>
 <script>
 (function () {
-	var cfg = {"target":null,"base":"/mtg-prix/"};
-	function closed() {
-		document.getElementById("wait").hidden = true;
-		document.getElementById("closed").hidden = false;
-	}
-	if (!cfg.target) return closed();
+	var cfg = {"target":"https://answer-new-brain-ltd.trycloudflare.com","base":"/mtg-prix/"};
+	var wait = document.getElementById("wait");
+	var closedBox = document.getElementById("closed");
+	var retry = document.getElementById("retry");
+	var timer = null;
 	// Chemin demandé, sans le préfixe du dépôt GitHub Pages.
 	var path = location.pathname;
 	if (path.indexOf(cfg.base) === 0) path = "/" + path.slice(cfg.base.length);
 	if (path === "/index.html" || path === "/404.html") path = "/";
-	var dest = cfg.target + path + location.search + location.hash;
-	var ctrl = "AbortController" in window ? new AbortController() : null;
-	var timer = setTimeout(function () { if (ctrl) ctrl.abort(); }, 8000);
-	fetch(cfg.target + "/api/health", { cache: "no-store", signal: ctrl ? ctrl.signal : undefined })
-		.then(function (r) { if (!r.ok) throw new Error(); location.replace(dest); })
-		.catch(closed)
-		.finally(function () { clearTimeout(timer); });
+
+	// Le site répond-il à cette adresse ? Si oui, on y va.
+	function tryTarget(target) {
+		if (!target) return Promise.resolve(false);
+		var ctrl = "AbortController" in window ? new AbortController() : null;
+		var t = setTimeout(function () { if (ctrl) ctrl.abort(); }, 8000);
+		return fetch(target + "/api/health", { cache: "no-store", signal: ctrl ? ctrl.signal : undefined })
+			.then(function (r) {
+				if (!r.ok) return false;
+				location.replace(target + path + location.search + location.hash);
+				return true;
+			})
+			.catch(function () { return false; })
+			.finally(function () { clearTimeout(t); });
+	}
+
+	// Après un redémarrage, GitHub met environ une minute à publier le nouveau lien :
+	// on relit la version la plus récente de cette page (sans cache) pour l'y trouver.
+	function latestTarget() {
+		return fetch(cfg.base + "index.html?v=" + Date.now(), { cache: "no-store" })
+			.then(function (r) { return r.text(); })
+			.then(function (html) {
+				var start = html.indexOf("var cfg = ");
+				var end = html.indexOf("};", start);
+				if (start < 0 || end < 0) return null;
+				return JSON.parse(html.slice(start + 10, end + 1)).target;
+			})
+			.catch(function () { return null; });
+	}
+
+	function attempt(first) {
+		clearTimeout(timer);
+		retry.disabled = true;
+		var check = first ? tryTarget(cfg.target) : latestTarget().then(tryTarget);
+		check.then(function (ok) {
+			if (ok) return;
+			wait.hidden = true;
+			closedBox.hidden = false;
+			retry.disabled = false;
+			timer = setTimeout(function () { attempt(false); }, 15000);
+		});
+	}
+	retry.addEventListener("click", function () { attempt(false); });
+	attempt(true);
 })();
 </script>
 </body>
